@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loan Status Predictor</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="page-header">
+      <div>
+        <h1>Loan Status Predictor</h1>
+        <p class="subtitle">Approval prediction with risk insights</p>
+      </div>
+      <div class="meta">
+        Model accuracy: {{ "%.2f"|format(metrics.test_accuracy * 100) }}%<br>
+        Cleaned rows: {{ metrics.cleaned_rows }} / {{ metrics.original_rows }}
+      </div>
+    </header>
+
+    <div class="layout">
+      <form method="post" class="form-panel">
+        <div class="grid">
+          {% for field in numeric_inputs %}
+            <label>
+              {{ labels[field] }}
+              <input
+                type="number"
+                name="{{ field }}"
+                value="{{ values[field] }}"
+                step="{{ steps[field] }}"
+                min="0"
+                required
+              >
+              {% if help_text.get(field) %}
+                <span class="field-help">{{ help_text[field] }}</span>
+              {% endif %}
+            </label>
+          {% endfor %}
+
+          {% for field in one_hot_features %}
+            <label>
+              {{ labels[field] }}
+              <select name="{{ field }}" required>
+                {% for option in options[field] %}
+                  <option value="{{ option }}" {% if values[field] == option %}selected{% endif %}>
+                    {{ option_labels.get(field, {}).get(option, option) }}
+                  </option>
+                {% endfor %}
+              </select>
+              {% if help_text.get(field) %}
+                <span class="field-help">{{ help_text[field] }}</span>
+              {% endif %}
+            </label>
+          {% endfor %}
+
+          <label>
+            Previous Loan Defaults
+            <select name="{{ binary_feature }}" required>
+              {% for option in options[binary_feature] %}
+                <option value="{{ option }}" {% if values[binary_feature] == option %}selected{% endif %}>
+                  {{ option_labels.get(binary_feature, {}).get(option, option) }}
+                </option>
+              {% endfor %}
+            </select>
+            {% if help_text.get(binary_feature) %}
+              <span class="field-help">{{ help_text[binary_feature] }}</span>
+            {% endif %}
+          </label>
+        </div>
+
+        <div class="actions">
+          <button type="submit">Predict Loan Status</button>
+        </div>
+      </form>
+
+      <aside class="result-panel">
+        {% if result %}
+          <div class="status {{ result.class_name }}">
+            <span class="badge">{{ result.status_label }}</span>
+            <h2>{{ result.title }}</h2>
+            <p>{{ result.message }}</p>
+          </div>
+
+          <div class="risk-section">
+            <h3>Risk Classification</h3>
+            <div class="risk-gauge-container">
+              <div class="risk-score">
+                <div class="score-value" style="background: {{ result.risk_category.color }}">
+                  <span class="score-number">{{ result.risk_score }}</span>
+                  <span class="score-unit">/100</span>
+                </div>
+                <div class="score-label" style="color: {{ result.risk_category.color }}">
+                  {{ result.risk_category.category }} RISK
+                </div>
+              </div>
+              <div class="gauge-wrap">
+                <canvas id="riskGaugeChart" aria-label="Risk score gauge"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <div class="metrics-grid">
+            <div class="metric">
+              <span>Acceptance probability</span>
+              <strong>{{ "%.2f"|format(result.probability * 100) }}%</strong>
+            </div>
+            <div class="metric">
+              <span>Decision threshold</span>
+              <strong>{{ "%.2f"|format(threshold * 100) }}%</strong>
+            </div>
+          </div>
+
+          <div class="chart-container">
+            <h3>Prediction Analysis</h3>
+            <canvas id="probabilityChart" aria-label="Acceptance and rejection probability chart"></canvas>
+            <p class="chart-fallback" hidden>Graphical insights are unavailable because the chart library could not load.</p>
+          </div>
+
+          <div class="reasons-container">
+            {% if result.support_reasons %}
+              <section class="reason-block positive">
+                <h3>Positive signals</h3>
+                <ul>
+                  {% for reason in result.support_reasons %}
+                    <li>{{ reason }}</li>
+                  {% endfor %}
+                </ul>
+              </section>
+            {% endif %}
+
+            {% if result.risk_reasons %}
+              <section class="reason-block negative">
+                <h3>Risk signals</h3>
+                <ul>
+                  {% for reason in result.risk_reasons %}
+                    <li>{{ reason }}</li>
+                  {% endfor %}
+                </ul>
+              </section>
+            {% endif %}
+          </div>
+
+          <script>
+            window.addEventListener('DOMContentLoaded', () => {
+              const fallback = document.querySelector('.chart-fallback');
+              if (!window.Chart) {
+                if (fallback) fallback.hidden = false;
+                return;
+              }
+
+              const riskScore = {{ result.risk_score|tojson }};
+              const riskColor = {{ result.risk_category.color|tojson }};
+              const riskCtx = document.getElementById('riskGaugeChart');
+              const probCtx = document.getElementById('probabilityChart');
+              const acceptance = {{ (result.probability * 100)|round(2)|tojson }};
+              const rejection = Math.max(0, 100 - acceptance);
+
+              if (riskCtx) {
+                new Chart(riskCtx, {
+                  type: 'doughnut',
+                  data: {
+                    datasets: [{
+                      data: [riskScore, 100 - riskScore],
+                      backgroundColor: [riskColor, '#e5e7eb'],
+                      borderWidth: 0
+                    }]
+                  },
+                  options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                      legend: { display: false },
+                      tooltip: { enabled: false }
+                    },
+                    circumference: 180,
+                    rotation: 270
+                  }
+                });
+              }
+
+              if (probCtx) {
+                new Chart(probCtx, {
+                  type: 'bar',
+                  data: {
+                    labels: ['Acceptance', 'Rejection'],
+                    datasets: [{
+                      label: 'Probability %',
+                      data: [acceptance, rejection],
+                      backgroundColor: ['#10b981', '#ef4444'],
+                      borderRadius: 6,
+                      borderSkipped: false
+                    }]
+                  },
+                  options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    plugins: {
+                      legend: { display: false }
+                    },
+                    scales: {
+                      x: {
+                        beginAtZero: true,
+                        max: 100,
+                        ticks: { callback: value => `${value}%` }
+                      }
+                    }
+                  }
+                });
+              }
+            });
+          </script>
+        {% else %}
+          <p class="empty">Enter applicant and loan details, then submit the form to get the latest model prediction.</p>
+        {% endif %}
+      </aside>
+    </div>
+  </main>
+</body>
+</html>
